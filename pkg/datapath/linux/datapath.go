@@ -17,6 +17,7 @@ package linux
 import (
 	"github.com/cilium/cilium/pkg/datapath"
 	"github.com/cilium/cilium/pkg/datapath/iptables"
+	"github.com/cilium/cilium/pkg/datapath/loader"
 	"github.com/cilium/cilium/pkg/endpoint/connector"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 )
@@ -34,6 +35,7 @@ type linuxDatapath struct {
 	node           datapath.NodeHandler
 	nodeAddressing datapath.NodeAddressing
 	config         DatapathConfiguration
+	loader         *loader.Loader
 }
 
 // NewDatapath creates a new Linux datapath
@@ -50,6 +52,8 @@ func NewDatapath(config DatapathConfiguration) datapath.Datapath {
 			log.WithField(logfields.Interface, config.EncryptInterface).Warn("Rpfilter could not be disabled, node to node encryption may fail")
 		}
 	}
+
+	dp.loader = &loader.Loader{}
 
 	return dp
 }
@@ -71,4 +75,8 @@ func (l *linuxDatapath) InstallProxyRules(proxyPort uint16, ingress bool, name s
 
 func (l *linuxDatapath) RemoveProxyRules(proxyPort uint16, ingress bool, name string) error {
 	return iptables.RemoveProxyRules(proxyPort, ingress, name)
+}
+
+func (l *linuxDatapath) Loader() datapath.Loader {
+	return l.loader
 }

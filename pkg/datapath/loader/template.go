@@ -22,6 +22,7 @@ import (
 	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/byteorder"
 	"github.com/cilium/cilium/pkg/datapath"
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/cilium/cilium/pkg/identity"
 	"github.com/cilium/cilium/pkg/mac"
 	bpfconfig "github.com/cilium/cilium/pkg/maps/configmap"
@@ -66,7 +67,7 @@ var (
 // as allowing traffic to leak out with routable addresses.
 type templateCfg struct {
 	datapath.EndpointConfiguration
-	stats *SpanStat
+	stats *metrics.SpanStat
 }
 
 // GetID returns a uint64, but in practice on the datapath side it is
@@ -117,9 +118,9 @@ func (t *templateCfg) IPv6Address() addressing.CiliumIPv6 {
 // it inside a templateCfg which hides static data from callers that wish to
 // generate header files based on the configuration, substituting it for
 // template data.
-func wrap(cfg datapath.EndpointConfiguration, stats *SpanStat) *templateCfg {
+func wrap(cfg datapath.EndpointConfiguration, stats *metrics.SpanStat) *templateCfg {
 	if stats == nil {
-		stats = &SpanStat{}
+		stats = &metrics.SpanStat{}
 	}
 	return &templateCfg{
 		EndpointConfiguration: cfg,
@@ -130,7 +131,7 @@ func wrap(cfg datapath.EndpointConfiguration, stats *SpanStat) *templateCfg {
 // elfMapSubstitutions returns the set of map substitutions that must occur in
 // an ELF template object file to update map references for the specified
 // endpoint.
-func elfMapSubstitutions(ep endpoint) map[string]string {
+func elfMapSubstitutions(ep datapath.Endpoint) map[string]string {
 	result := make(map[string]string)
 
 	epID := uint16(ep.GetID())
@@ -180,7 +181,7 @@ func sliceToBe32(input []byte) uint32 {
 // elfVariableSubstitutions returns the set of data substitutions that must
 // occur in an ELF template object file to update static data for the specified
 // endpoint.
-func elfVariableSubstitutions(ep endpoint) map[string]uint32 {
+func elfVariableSubstitutions(ep datapath.Endpoint) map[string]uint32 {
 	result := make(map[string]uint32)
 
 	if ipv6 := ep.IPv6Address(); ipv6 != nil {
@@ -209,6 +210,6 @@ func elfVariableSubstitutions(ep endpoint) map[string]uint32 {
 // ELFSubstitutions fetches the set of variable and map substitutions that
 // must be implemented against an ELF template to configure the datapath for
 // the specified endpoint.
-func ELFSubstitutions(ep endpoint) (map[string]uint32, map[string]string) {
+func ELFSubstitutions(ep datapath.Endpoint) (map[string]uint32, map[string]string) {
 	return elfVariableSubstitutions(ep), elfMapSubstitutions(ep)
 }

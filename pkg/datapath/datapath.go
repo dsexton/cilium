@@ -15,7 +15,11 @@
 package datapath
 
 import (
+	"context"
 	"io"
+
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
+	"github.com/sirupsen/logrus"
 )
 
 // Datapath is the interface to abstract all datapath interactions. The
@@ -54,4 +58,27 @@ type Datapath interface {
 	// RemoveProxyRules creates the necessary datapath config (e.g., iptables
 	// rules for redirecting host proxy traffic on a specific ProxyPort)
 	RemoveProxyRules(proxyPort uint16, ingress bool, name string) error
+
+	Loader() Loader
+}
+
+// Loader is an interface to abstract out loading of datapath programs.
+type Loader interface {
+	CallsMapPath(id uint16) string
+	CompileAndLoad(ctx context.Context, ep Endpoint, stats *metrics.SpanStat) error
+	CompileOrLoad(ctx context.Context, ep Endpoint, stats *metrics.SpanStat) error
+	ReloadDatapath(ctx context.Context, ep Endpoint, stats *metrics.SpanStat) error
+	EndpointHash(cfg EndpointConfiguration) (string, error)
+	DeleteDatapath(ctx context.Context, ifName, direction string) error
+	Unload(ep Endpoint)
+}
+
+// Endpoint provides access endpoint configuration information that is necessary
+// to compile and load the datapath.
+type Endpoint interface {
+	EndpointConfiguration
+	InterfaceName() string
+	Logger(subsystem string) *logrus.Entry
+	StateDir() string
+	MapPath() string
 }

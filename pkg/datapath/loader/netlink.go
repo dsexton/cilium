@@ -131,7 +131,7 @@ func graftDatapath(ctx context.Context, mapPath, objPath, progSec string) error 
 }
 
 // DeleteDatapath filter from the given ifName
-func DeleteDatapath(ctx context.Context, ifName, direction string) error {
+func (l *Loader) DeleteDatapath(ctx context.Context, ifName, direction string) error {
 	args := []string{"filter", "delete", "dev", ifName, direction, "pref", "1", "handle", "1", "bpf"}
 	cmd := exec.CommandContext(ctx, "tc", args...).WithFilters(libbpfFixupMsg)
 	_, err := cmd.CombinedOutput(log, true)

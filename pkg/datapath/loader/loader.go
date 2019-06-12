@@ -21,8 +21,10 @@ import (
 	"os"
 	"path"
 
+	"github.com/cilium/cilium/pkg/bpf"
 	"github.com/cilium/cilium/pkg/datapath"
 	"github.com/cilium/cilium/pkg/datapath/linux/route"
+	"github.com/cilium/cilium/pkg/datapath/loader/metrics"
 	"github.com/cilium/cilium/pkg/defaults"
 	"github.com/cilium/cilium/pkg/elf"
 	"github.com/cilium/cilium/pkg/logging"
@@ -46,17 +48,11 @@ const (
 	dirEgress  = "egress"
 )
 
-// endpoint provides access to endpoint information that is necessary to
-// compile and load the datapath.
-type endpoint interface {
-	datapath.EndpointConfiguration
-	InterfaceName() string
-	Logger(subsystem string) *logrus.Entry
-	StateDir() string
-	MapPath() string
-}
+// Loader is a wrapper structure around operations related to compiling,
+// loading, and reloading datapath programs.
+type Loader struct{}
 
-func upsertEndpointRoute(ep endpoint, ip net.IPNet) error {
+func upsertEndpointRoute(ep datapath.Endpoint, ip net.IPNet) error {
 	endpointRoute := route.Route{
 		Prefix: ip,
 		Device: ep.InterfaceName(),
@@ -67,7 +63,7 @@ func upsertEndpointRoute(ep endpoint, ip net.IPNet) error {
 	return err
 }
 
-func removeEndpointRoute(ep endpoint, ip net.IPNet) error {
+func removeEndpointRoute(ep datapath.Endpoint, ip net.IPNet) error {
 	return route.Delete(route.Route{
 		Prefix: ip,
 		Device: ep.InterfaceName(),
@@ -75,7 +71,7 @@ func removeEndpointRoute(ep endpoint, ip net.IPNet) error {
 	})
 }
 
-func reloadDatapath(ctx context.Context, ep endpoint, dirs *directoryInfo) error {
+func (l *Loader) reloadDatapath(ctx context.Context, ep datapath.Endpoint, dirs *directoryInfo) error {
 	// Replace the current program
 	objPath := path.Join(dirs.Output, endpointObj)
 	if ep.HasIpvlanDataPath() {
@@ -136,18 +132,18 @@ func reloadDatapath(ctx context.Context, ep endpoint, dirs *directoryInfo) error
 	return nil
 }
 
-func compileAndLoad(ctx context.Context, ep endpoint, dirs *directoryInfo, stats *SpanStat) error {
+func (l *Loader) compileAndLoad(ctx context.Context, ep datapath.Endpoint, dirs *directoryInfo, stats *metrics.SpanStat) error {
 	debug := option.Config.BPFCompilationDebug
-	stats.bpfCompilation.Start()
+	stats.BpfCompilation.Start()
 	err := compileDatapath(ctx, dirs, debug, ep.Logger(Subsystem))
-	stats.bpfCompilation.End(err == nil)
+	stats.BpfCompilation.End(err == nil)
 	if err != nil {
 		return err
 	}
 
-	stats.bpfLoadProg.Start()
-	err = reloadDatapath(ctx, ep, dirs)
-	stats.bpfLoadProg.End(err == nil)
+	stats.BpfLoadProg.Start()
+	err = l.reloadDatapath(ctx, ep, dirs)
+	stats.BpfLoadProg.End(err == nil)
 	return err
 }
 
@@ -155,7 +151,7 @@ func compileAndLoad(ctx context.Context, ep endpoint, dirs *directoryInfo, stats
 // and loads it onto the interface associated with the endpoint.
 //
 // Expects the caller to have created the directory at the path ep.StateDir().
-func CompileAndLoad(ctx context.Context, ep endpoint, stats *SpanStat) error {
+func (l *Loader) CompileAndLoad(ctx context.Context, ep datapath.Endpoint, stats *metrics.SpanStat) error {
 	if ep == nil {
 		log.Fatalf("LoadBPF() doesn't support non-endpoint load")
 	}
@@ -166,7 +162,7 @@ func CompileAndLoad(ctx context.Context, ep endpoint, stats *SpanStat) error {
 		State:   ep.StateDir(),
 		Output:  ep.StateDir(),
 	}
-	return compileAndLoad(ctx, ep, &dirs, stats)
+	return l.compileAndLoad(ctx, ep, &dirs, stats)
 }
 
 // CompileOrLoad loads the BPF datapath programs for the specified endpoint.
@@ -182,7 +178,7 @@ func CompileAndLoad(ctx context.Context, ep endpoint, stats *SpanStat) error {
 // CompileOrLoad with the same configuration parameters. When the first
 // goroutine completes compilation of the template, all other CompileOrLoad
 // invocations will be released.
-func CompileOrLoad(ctx context.Context, ep endpoint, stats *SpanStat) error {
+func (l *Loader) CompileOrLoad(ctx context.Context, ep datapath.Endpoint, stats *metrics.SpanStat) error {
 	templatePath, _, err := templateCache.fetchOrCompile(ctx, ep, stats)
 	if err != nil {
 		return err
@@ -218,33 +214,34 @@ func CompileOrLoad(ctx context.Context, ep endpoint, stats *SpanStat) error {
 		}
 	}
 
-	stats.bpfWriteELF.Start()
+	stats.BpfWriteELF.Start()
 	dstPath := path.Join(ep.StateDir(), endpointObj)
 	opts, strings := ELFSubstitutions(ep)
 	if err = template.Write(dstPath, opts, strings); err != nil {
-		stats.bpfWriteELF.End(err == nil)
+		stats.BpfWriteELF.End(err == nil)
 		return err
 	}
-	stats.bpfWriteELF.End(err == nil)
+	stats.BpfWriteELF.End(err == nil)
 
-	return ReloadDatapath(ctx, ep, stats)
+	return l.ReloadDatapath(ctx, ep, stats)
 }
 
-func ReloadDatapath(ctx context.Context, ep endpoint, stats *SpanStat) (err error) {
+// ReloadDatapath reloads the datapath programs for the specified Endpoint.
+func (l *Loader) ReloadDatapath(ctx context.Context, ep datapath.Endpoint, stats *metrics.SpanStat) (err error) {
 	dirs := directoryInfo{
 		Library: option.Config.BpfDir,
 		Runtime: option.Config.StateDir,
 		State:   ep.StateDir(),
 		Output:  ep.StateDir(),
 	}
-	stats.bpfLoadProg.Start()
-	err = reloadDatapath(ctx, ep, &dirs)
-	stats.bpfLoadProg.End(err == nil)
+	stats.BpfLoadProg.Start()
+	err = l.reloadDatapath(ctx, ep, &dirs)
+	stats.BpfLoadProg.End(err == nil)
 	return err
 }
 
 // Unload removes the datapath specific program aspects
-func Unload(ep endpoint) {
+func (l *Loader) Unload(ep datapath.Endpoint) {
 	if ep.RequireEndpointRoute() {
 		if ip := ep.IPv4Address(); ip.IsSet() {
 			removeEndpointRoute(ep, *ip.IPNet(32))
@@ -254,4 +251,9 @@ func Unload(ep endpoint) {
 			removeEndpointRoute(ep, *ip.IPNet(128))
 		}
 	}
+}
+
+// CallsMapPath gets the BPF Calls Map for the endpoint with the specified ID.
+func (l *Loader) CallsMapPath(id uint16) string {
+	return bpf.LocalMapPath(CallsMapName, id)
 }
